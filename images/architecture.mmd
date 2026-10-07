@@ -1,0 +1,33 @@
+%%{init: {"flowchart": {"curve": "basis"}}}%%
+flowchart LR
+  subgraph callers["Callers"]
+    A1["Reader agent<br/>(Cloud Run, service account)"]
+    A2["Admin agent<br/>(Agent Runtime, agent identity)"]
+  end
+
+  GW["Agent Gateway<br/>IAP egress policy<br/>(per-tool conditions)"]
+
+  subgraph vpc["Project VPC"]
+    NAT["Cloud NAT"]
+    subgraph run["Cloud Run: catalog-mcp<br/>ingress = INTERNAL_ONLY"]
+      MW["Auth middleware<br/>verify ID token → role"]
+      TOOLS["Tools by role<br/>reader: list_notes, get_note<br/>admin: + delete_note"]
+      MW --> TOOLS
+    end
+  end
+
+  REG[("Agent Registry<br/>display name + toolspec ≤ 10 KB")]
+
+  subgraph ci["GitHub Actions (keyless WIF)"]
+    TS["generate_toolspec.py<br/>fails over budget"]
+    DEP["build → push → run deploy"]
+    BIND["register + bind IAP policy"]
+  end
+
+  A1 -- "ALL_TRAFFIC egress" --> NAT --> MW
+  A2 -. "PSC interface" .-> GW --> MW
+  A1 -. "lookup by name" .-> REG
+  A2 -. "lookup by name" .-> REG
+  DEP --> run
+  TS --> BIND
+  BIND -- "create/update entry,<br/>set IAP policy" --> REG

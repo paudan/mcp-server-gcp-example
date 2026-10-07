@@ -1,0 +1,9 @@
+project_id        = "my-project"
+github_repository = "my-org/my-repo"
+
+reader_identities = [
+  "serviceAccount:reader-agent@my-project.iam.gserviceaccount.com",
+]
+admin_identities = [
+  "serviceAccount:admin-agent@my-project.iam.gserviceaccount.com",
+]

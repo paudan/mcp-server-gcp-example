@@ -1,0 +1,68 @@
+name: Deploy catalog-mcp
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "server/**"
+      - "scripts/**"
+      - ".github/actions/deploy-cloud-run/**"
+      - ".github/workflows/deploy-server.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  SERVICE: catalog-mcp
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      # Fail before building anything if the tests or the toolspec budget break.
+      - name: Test and generate toolspec
+        working-directory: server
+        run: |
+          uv sync --locked
+          uv run pytest -q
+          uv run python scripts/generate_toolspec.py "$RUNNER_TEMP/toolspec.json"
+
+      - uses: ./.github/actions/deploy-cloud-run
+        with:
+          service_name: ${{ env.SERVICE }}
+          build_context: server
+          wif_provider: ${{ secrets.WIF_PROVIDER }}
+          wif_service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+          gcp_project_id: ${{ secrets.GCP_PROJECT_ID }}
+          gcp_region: ${{ secrets.GCP_REGION }}
+          artifact_registry_repo: services
+
+      # The runner's preinstalled gcloud predates the agent-registry commands.
+      - uses: google-github-actions/setup-gcloud@v3
+        with:
+          install_components: alpha,beta
+
+      - name: Register in Agent Registry
+        env:
+          PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+          REGION: ${{ secrets.GCP_REGION }}
+          TOOLSPEC: ${{ runner.temp }}/toolspec.json
+        run: scripts/register_in_registry.sh
+
+      # Needs the registry entry's id, which exists only after the step above.
+      # The policy JSON is Terraform's output, exported once by hand/by the operator
+      # into the POLICY_JSON repository variable.
+      - name: Bind the IAP policy
+        if: vars.POLICY_JSON != ''
+        env:
+          PROJECT: ${{ secrets.GCP_PROJECT_ID }}
+          REGION: ${{ secrets.GCP_REGION }}
+          POLICY_JSON: ${{ vars.POLICY_JSON }}
+        run: scripts/bind_iap_policy.sh

@@ -1,0 +1,55 @@
+name: Deploy Cloud Run service
+description: Builds and pushes one image, then deploys it and sends all traffic to it.
+
+inputs:
+  service_name:
+    required: true
+  build_context:
+    required: true
+  wif_provider:
+    required: true
+  wif_service_account:
+    required: true
+  gcp_project_id:
+    required: true
+  gcp_region:
+    required: true
+  artifact_registry_repo:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - uses: google-github-actions/auth@v2
+      with:
+        workload_identity_provider: ${{ inputs.wif_provider }}
+        service_account: ${{ inputs.wif_service_account }}
+
+    - uses: google-github-actions/setup-gcloud@v3
+
+    - name: Configure Artifact Registry auth
+      shell: bash
+      run: gcloud auth configure-docker "${{ inputs.gcp_region }}-docker.pkg.dev" --quiet
+
+    - name: Build and push image
+      id: image
+      shell: bash
+      run: |
+        base="${{ inputs.gcp_region }}-docker.pkg.dev/${{ inputs.gcp_project_id }}/${{ inputs.artifact_registry_repo }}/${{ inputs.service_name }}"
+        docker build -t "$base:${{ github.sha }}" "${{ inputs.build_context }}"
+        docker push "$base:${{ github.sha }}"
+        echo "image=$base:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+    - name: Deploy to Cloud Run
+      shell: bash
+      run: |
+        gcloud run deploy "${{ inputs.service_name }}" \
+          --image "${{ steps.image.outputs.image }}" \
+          --project "${{ inputs.gcp_project_id }}" \
+          --region "${{ inputs.gcp_region }}"
+        # Terraform created the service with a placeholder revision; make sure the
+        # new revision takes all traffic even if an earlier deploy pinned it.
+        gcloud run services update-traffic "${{ inputs.service_name }}" \
+          --to-latest \
+          --project "${{ inputs.gcp_project_id }}" \
+          --region "${{ inputs.gcp_region }}"
